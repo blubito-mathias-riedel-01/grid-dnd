@@ -1,0 +1,8 @@
+.grid {
+  display: grid;
+}
+
+.cell {
+  padding: 20px;
+  border: 1px solid red;
+}
