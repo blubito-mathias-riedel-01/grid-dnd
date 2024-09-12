@@ -5,7 +5,6 @@ import {
   useSensor,
   PointerSensor,
   KeyboardSensor,
-  closestCorners,
   DragOverlay,
 } from '@dnd-kit/core';
 import {
@@ -18,6 +17,9 @@ import './Grid.css';
 import { SortableWrapper } from './SortableItem/SortableWrapper';
 import { createPortal } from 'react-dom';
 import { arrayMove } from '@dnd-kit/sortable';
+import Cell from './Cell/Cell';
+import IElement from '../IElement';
+import useCustomCollisionDetectionStrategy from './useCustomCollisionDetectionStrategy';
 
 const Grid = () => {
   const sensors = useSensors(
@@ -28,23 +30,26 @@ const Grid = () => {
   );
 
   const [rows, setRows] = useState([
-    { id: 1, name: 'Row 1', position: 1 },
-    { id: 2, name: 'Row 2', position: 2 },
-    { id: 3, name: 'Row 3', position: 3 },
+    { id: 1, name: 'Row 1' },
+    { id: 2, name: 'Row 2' },
+    { id: 3, name: 'Row 3' },
   ]);
 
   const [columns, setColumns] = useState([
-    { id: 1, name: 'Column 1', position: 1 },
-    { id: 2, name: 'Column 2', position: 2 },
-    { id: 3, name: 'Column 3', position: 3 },
+    { id: 1, name: 'Column 1' },
+    { id: 2, name: 'Column 2' },
+    { id: 3, name: 'Column 3' },
   ]);
 
-  const [elements] = useState([
-    { id: 1, name: 'Item 1', column: 1, row: 1, position: 1 },
+  const [elements, setElements] = useState<IElement[]>([
+    { id: 1, name: 'Item 1', columnId: 1, rowId: 1 },
+    { id: 2, name: 'Item 2', columnId: 1, rowId: 1 },
   ]);
 
   const [activeElement, setActiveElement] = useState(null);
   const [isColumnSortingActive, setIsColumnSortingActive] = useState(false);
+
+  const customCollisionDetectionStrategy = useCustomCollisionDetectionStrategy(elements);
 
   const handleDragStart = ({ active }) => {
     const [elementType, id] = active.id.split('-');
@@ -54,10 +59,60 @@ const Grid = () => {
 
     if (elementType === 'row')
       setActiveElement(rows.find((row) => row.id.toString() === id));
+
+    if (elementType === 'element')
+      setActiveElement(
+        elements.find((element) => element.id.toString() === id)
+      );
   };
 
-  const handleDragOver = ({ over }) => {
-    console.log(over.id);
+  const updateRowAndColumnId = (
+    id: number,
+    columnId: number,
+    rowId: number
+  ) => {
+    const updatedElements = elements.map((element) => {
+      if (element.id === id) {
+        return {
+          ...element,
+          rowId: Number(rowId),
+          columnId: Number(columnId),
+        };
+      }
+      return element;
+    });
+
+    setElements(updatedElements);
+  };
+
+  const handleDragOver = ({ active, over }) => {
+    const [activeElementType, activeId] = active.id.split('-');
+    const [overElementType, columnId, rowId] = over.id.split('-');
+    const overId = columnId;
+
+    if (activeElementType === 'element' && overElementType === 'cell') {
+      updateRowAndColumnId(Number(activeId), Number(columnId), Number(rowId));
+    }
+
+    if (activeElementType === 'element' && overElementType === 'element') {
+      const activeElement = elements.find(
+        (elements) => elements.id.toString() === activeId
+      );
+      const overElement = elements.find(
+        (elements) => elements.id.toString() === overId
+      );
+      const didRowOrColumnChange =
+        activeElement.rowId !== overElement.rowId ||
+        activeElement.columnId !== overElement.columnId;
+
+      if (didRowOrColumnChange) {
+        updateRowAndColumnId(
+          Number(activeId),
+          overElement.columnId,
+          overElement.rowId
+        );
+      }
+    }
   };
 
   const handleDragEnd = ({ active, over }) => {
@@ -79,11 +134,20 @@ const Grid = () => {
       const activeIndex = rows.findIndex(
         (row) => row.id.toString() === activeId
       );
-      const overIndex = rows.findIndex(
-        (row) => row.id.toString() === overId
-      );
+      const overIndex = rows.findIndex((row) => row.id.toString() === overId);
 
       setRows(arrayMove(rows, activeIndex, overIndex));
+    }
+
+    if (activeElementType === 'element' && overElementType === 'element') {
+      const activeIndex = elements.findIndex(
+        (element) => element.id.toString() === activeId
+      );
+      const overIndex = elements.findIndex(
+        (elements) => elements.id.toString() === overId
+      );
+
+      setElements(arrayMove(elements, activeIndex, overIndex));
     }
 
     setActiveElement(null);
@@ -92,14 +156,14 @@ const Grid = () => {
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCorners}
+      collisionDetection={customCollisionDetectionStrategy}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
     >
       <SortableContext
         id="grid"
-        items={columns}
+        items={isColumnSortingActive ? columns : rows}
         strategy={
           isColumnSortingActive
             ? horizontalListSortingStrategy
@@ -117,7 +181,6 @@ const Grid = () => {
               id={`column-${column.id}`}
               element={
                 <div
-                  className="cell columnHandle"
                   onMouseEnter={() => setIsColumnSortingActive(true)}
                   onMouseLeave={() => setIsColumnSortingActive(false)}
                 >
@@ -131,21 +194,17 @@ const Grid = () => {
               <SortableWrapper
                 key={`row-${row.id}`}
                 id={`row-${row.id}`}
-                element={
-                  <div className="cell rowHandle">
-                    {row.name}
-                  </div>
-                }
+                element={<div>{row.name}</div>}
               />
               {columns.map((column) => (
-                <div className="cell" key={`element-${column.id}-${row.id}`}>
-                  {
-                    elements.find(
-                      (element) =>
-                        element.row === row.id && element.column === column.id
-                    )?.name
-                  }
-                </div>
+                <Cell
+                  columnId={column.id}
+                  rowId={row.id}
+                  elements={elements.filter(
+                    (element) =>
+                      element.rowId === row.id && element.columnId === column.id
+                  )}
+                />
               ))}
             </>
           ))}
